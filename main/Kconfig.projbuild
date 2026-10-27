@@ -1,0 +1,31 @@
+menu "Oral-B battery monitor"
+
+    config APP_BRUSH_ADDR
+        string "Brush BLE address filter"
+        default ""
+        help
+            Optional "aa:bb:cc:dd:ee:ff". Leave empty to pair with the first
+            device that advertises a valid Oral-B iO payload.
+
+    menu "polling"
+
+        config APP_POLL_CHARGING_MINUTES
+            int "Poll interval while the brush is charging (minutes)"
+            range 1 720
+            default 10
+            help
+                Docked is the safest moment to take the brush's single BLE
+                slot. Battery changes slowly, so this is deliberately not
+                aggressive.
+
+        config APP_POLL_IDLE_MINUTES
+            int "Poll interval while the brush is idle and off the charger (minutes)"
+            range 1 1440
+            default 60
+            help
+                The brush sleeps (state 115) when off the charger and only
+                advertises periodically, so a long interval costs nothing.
+
+    endmenu
+
+endmenu
