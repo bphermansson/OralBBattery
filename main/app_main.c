@@ -8,6 +8,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -39,18 +40,40 @@ static void show_message(struct ssd1306 *display, const char *message)
     }
 }
 
-static void show_battery(struct ssd1306 *display,
-                         const oralb_ble_status_t *status)
+static void format_age(char *out, size_t size, int64_t age_us)
 {
-    char text[64];
-    const int length = snprintf(text, sizeof(text),
-                                "Battery: %u%% %s",
-                                status->battery.percent,
-                                oralb_state_name(status->state));
-    if (length < 0 || (size_t)length >= sizeof(text)) {
-        ESP_LOGE(TAG, "could not format OLED status");
+    const int64_t minutes = age_us / (60 * 1000 * 1000);
+    if (minutes < 1) {
+        snprintf(out, size, "<1m ago");
+    } else if (minutes < 60) {
+        snprintf(out, size, "%dm ago", (int)minutes);
+    } else if (minutes < 24 * 60) {
+        snprintf(out, size, "%dh%02dm", (int)(minutes / 60),
+                 (int)(minutes % 60));
+    } else {
+        snprintf(out, size, "%dd ago", (int)(minutes / (24 * 60)));
+    }
+}
+
+/* Four fixed 8-character rows, as wide as the display. */
+static void show_battery(struct ssd1306 *display,
+                         const oralb_ble_status_t *status,
+                         const char *live_state, int64_t now_us,
+                         char *shown, size_t shown_size)
+{
+    char age[16];
+    format_age(age, sizeof(age), now_us - status->updated_us);
+
+    char level[16];
+    snprintf(level, sizeof(level), "%u%%", status->battery.percent);
+
+    char text[40];
+    snprintf(text, sizeof(text), "%-8.8s%-8.8s%-8.8s%-8.8s", "Battery", level,
+             age, live_state);
+    if (strcmp(text, shown) == 0) {
         return;
     }
+    snprintf(shown, shown_size, "%s", text);
 
     const int err = displayText(display, text);
     if (err != 0) {
@@ -113,19 +136,25 @@ void app_main(void)
 
     ESP_LOGI(TAG, "OLED ready; waiting for a quiet Oral-B state");
 
-    uint32_t displayed_generation = 0;
     uint8_t displayed_adv_state = ORALB_STATE_UNKNOWN;
     bool displayed_waiting = true;
+    char shown_battery[48] = "";
     for (;;) {
+        const int64_t now_us = esp_timer_get_time();
         oralb_ble_adv_t adv;
         const bool has_fresh_adv =
-            oralb_ble_get_adv(&adv) &&
-            esp_timer_get_time() - adv.seen_us < 30 * 1000 * 1000;
+            oralb_ble_get_adv(&adv) && now_us - adv.seen_us < 30 * 1000 * 1000;
 
-        if (has_fresh_adv) {
+        /* Once a battery level is known it stays on screen with its age. */
+        oralb_ble_status_t status;
+        if (oralb_ble_get_status(&status)) {
+            show_battery(&display, &status,
+                         has_fresh_adv ? advertisement_message(adv.adv.state)
+                                       : "No signal",
+                         now_us, shown_battery, sizeof(shown_battery));
+        } else if (has_fresh_adv) {
             if (displayed_adv_state != adv.adv.state || displayed_waiting) {
-                show_message(&display,
-                             advertisement_message(adv.adv.state));
+                show_message(&display, advertisement_message(adv.adv.state));
             }
             displayed_adv_state = adv.adv.state;
             displayed_waiting = false;
@@ -135,14 +164,6 @@ void app_main(void)
             }
             displayed_adv_state = ORALB_STATE_UNKNOWN;
             displayed_waiting = true;
-        }
-
-        oralb_ble_status_t status_snapshot;
-        if (oralb_ble_get_status(&status_snapshot) &&
-            status_snapshot.generation != displayed_generation &&
-            has_fresh_adv && oralb_state_is_quiet(adv.adv.state)) {
-            show_battery(&display, &status_snapshot);
-            displayed_generation = status_snapshot.generation;
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }

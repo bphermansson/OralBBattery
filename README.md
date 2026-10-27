@@ -84,7 +84,10 @@ the monitor never writes to the brush.
 ### Display
 
 The SSD1306 is initialized over I2C at startup. After each successful BLE poll,
-the OLED updates with the battery percentage and brush state. The display
+the OLED shows the battery percentage, the time since that update and the
+current brush state (or `No signal`). The last level stays on screen until the
+next successful poll. Before the first poll it shows the brush state or
+`Waiting for brush`. The display
 driver is in `components/idf-SSD1306/`, copied from the separate SSD1306
 ESP-IDF project and retained under its MIT license.
 
